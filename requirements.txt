@@ -1,2 +1,6 @@
 streamlit
 easyocr
+pillow
+pandas
+
+
