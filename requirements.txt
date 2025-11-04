@@ -1,1 +1,5 @@
-pip install streamlit easyocr pillow numpy
+streamlit
+easyocr
+pillow
+numpy
+torch
