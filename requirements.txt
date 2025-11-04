@@ -3,9 +3,4 @@ easyocr
 pillow
 numpy
 pandas
-
-
-
-
-
-
+torch
