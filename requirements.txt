@@ -1,5 +1,5 @@
 streamlit
-pytesseract
-pillow
-numpy
 pandas
+pytesseract
+Pillow
+easyocr
