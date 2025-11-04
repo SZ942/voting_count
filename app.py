@@ -13,7 +13,8 @@ st.title("投票証明画像の集計ツール")
 uploaded_files = st.file_uploader(
     "証明画像をアップロード",
     type=["jpg", "jpeg", "png"],
-    accept_multiple_files=True)
+    accept_multiple_files=True
+)
 
 if uploaded_files:
     raw_data = []
@@ -53,8 +54,10 @@ if uploaded_files:
             "証明番号": proof_id
         })
 
-    # 表形式で表示
+    # DataFrame化＆None除外
     df = pd.DataFrame(raw_data)
+    df = df.dropna(subset=["アカウント名", "投票数"])
+
     st.subheader("🔍 OCR読み取り結果")
     st.dataframe(df)
 
