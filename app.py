@@ -10,19 +10,29 @@ reader = easyocr.Reader(['ja'])
 
 st.title("投票証明画像の集計ツール")
 
-uploaded_files = st.file_uploader("証明画像をアップロード", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+uploaded_files = st.file_uploader(
+    "証明画像をアップロード",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
+)
 
 if uploaded_files:
     raw_data = []
 
     for file in uploaded_files:
-        # 画像読み込み＆コントラスト強調
-        img = Image.open(file)
+        # 画像読み込み＆前処理
+        img = Image.open(file).convert("L")  # グレースケール
+        img = img.resize((img.width * 2, img.height * 2))  # 拡大
         enhancer = ImageEnhance.Contrast(img)
         img_enhanced = enhancer.enhance(2.0)
 
-        # NumPy配列に変換してOCR実行
+        # OCR実行
         ocr_result = reader.readtext(np.array(img_enhanced))
+
+        # 🔍 OCR結果を表示（デバッグ用）
+        st.write(f"📷 ファイル名: {file.name}")
+        st.write("🧾 OCR読み取り生データ")
+        st.write(ocr_result)
 
         account = None
         votes = None
@@ -31,9 +41,9 @@ if uploaded_files:
         for _, text, _ in ocr_result:
             if "@" in text:
                 account = text.strip()
-            match_votes = re.search(r"(\d+)\s*票", text)
+            match_votes = re.search(r"(投票数[:：]?\s*)?(\d+)\s*(票|回)", text)
             if match_votes:
-                votes = int(match_votes.group(1))
+                votes = int(match_votes.group(2))
             match_proof = re.search(r"#\d{6,}", text)
             if match_proof:
                 proof_id = match_proof.group(0)
