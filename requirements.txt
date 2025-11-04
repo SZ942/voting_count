@@ -1,6 +1,5 @@
 streamlit
-easyocr
+pytesseract
 pillow
 numpy
 pandas
-torch
