@@ -1,5 +1,3 @@
-# streamlit_app.py
-
 import streamlit as st
 import pandas as pd
 import easyocr
@@ -22,22 +20,38 @@ def load_reader():
 def extract_info(text):
     """
     OCRテキストから日付と投票回数を抽出します。
-    ここの正規表現は、画像内のテキスト形式に合わせて調整が必要です。
+    提供された画像パターンに合わせて正規表現を調整しています。
     """
-    # 日付の正規表現（例: YYYY年MM月DD日 または YYYY/MM/DD）
-    date_pattern = r"(\d{4}年\d{1,2}月\d{1,2}日|\d{4}/\d{1,2}/\d{1,2})"
+    
+    # --- デバッグ用 (不要ならコメントアウトまたは削除) ---
+    # with st.expander("デバッグ: OCR生テキスト"):
+    #     st.text(text)
+    # ----------------------------------------------------
+
+    # 日付の正規表現
+    # YYYY.MM.DD 形式にマッチ。画像右下の黄色い文字のパターンに対応。
+    # OCRが「2025.10.31」のように認識すると仮定。
+    date_pattern = r"(\d{4}\.\d{1,2}\.\d{1,2})"
     date_match = re.search(date_pattern, text)
     date = date_match.group(0) if date_match else "N/A"
 
-    # 投票回数の正規表現（例: "投票回数: 123" または "123票"）
-    # 複数のパターンをOR(|)で連結
-    count_pattern = r"投票回数[:：\s]*(\d+)|(\d+)\s*票"
+    # 投票回数の正規表現
+    # 「投票回数」または「総使用量」の後に続く数字を抽出。
+    # 数字はカンマを含む可能性があるので [\d,]+ で対応。
+    # 複数のパターンをOR条件(|)で連結し、最初のマッチを採用。
+    
+    # 投票回数: 123 の形式
+    # 総使用量: 123 の形式
+    count_pattern = r"投票回数[:：\s]*([\d,]+)|総使用量[:：\s]*([\d,]+)"
+    
     count_match = re.search(count_pattern, text)
     
     count = "N/A"
     if count_match:
-        # group(1) (e.g., "投票回数: 123") または group(2) (e.g., "123票")
-        count = count_match.group(1) or count_match.group(2)
+        # group(1) (「投票回数」の後) または group(2) (「総使用量」の後) のいずれか
+        count = next((g for g in count_match.groups() if g is not None), "N/A")
+        # 抽出した数字からカンマを除去
+        count = count.replace(",", "")
 
     return date, count
 
@@ -84,6 +98,8 @@ if uploaded_files:
                 image_np = np.array(image) # EasyOCRはNumPy配列を必要とする
 
                 # OCR実行 (detail=0 でテキストのみのリストを取得)
+                # 画像をトリミングしてOCR範囲を絞ることで精度向上も期待できるが、
+                # まずは全体で試行。必要であれば画像処理を追加。
                 ocr_results = reader.readtext(image_np, detail=0)
                 full_text = " ".join(ocr_results) # 検出したテキストを全て連結
 
@@ -94,7 +110,7 @@ if uploaded_files:
                     "ファイル名": uploaded_file.name,
                     "日付": date,
                     "投票回数": count,
-                    "検出テキスト (参考)": full_text[:100] + "..." if full_text else "N/A"
+                    "検出テキスト (参考)": full_text[:200] + "..." if len(full_text) > 200 else full_text
                 })
 
             except Exception as e:
