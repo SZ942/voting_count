@@ -1,5 +1,1 @@
-streamlit
-pandas
-pytesseract
-Pillow
-easyocr
+pip install streamlit easyocr pillow numpy
