@@ -1,9 +1,11 @@
 import streamlit as st
 import easyocr
 import re
-from PIL import Image, ImageEnhance
+import numpy as np
 import pandas as pd
+from PIL import Image, ImageEnhance
 
+# OCR準備
 reader = easyocr.Reader(['ja'])
 
 st.title("投票証明画像の集計ツール")
@@ -14,11 +16,14 @@ if uploaded_files:
     raw_data = []
 
     for file in uploaded_files:
+        # 画像読み込み＆コントラスト強調
         img = Image.open(file)
         enhancer = ImageEnhance.Contrast(img)
         img_enhanced = enhancer.enhance(2.0)
 
-        ocr_result = reader.readtext(img_enhanced)
+        # NumPy配列に変換してOCR実行
+        ocr_result = reader.readtext(np.array(img_enhanced))
+
         account = None
         votes = None
         proof_id = None
@@ -39,12 +44,12 @@ if uploaded_files:
             "証明番号": proof_id
         })
 
+    # 表形式で表示
     df = pd.DataFrame(raw_data)
-
     st.subheader("🔍 OCR読み取り結果")
     st.dataframe(df)
 
-    # 重複チェック
+    # 重複削除
     if df["証明番号"].notna().any():
         df_unique = df.drop_duplicates(subset=["証明番号"])
         st.write("✅ 証明番号で重複削除しました")
@@ -52,6 +57,7 @@ if uploaded_files:
         df_unique = df.drop_duplicates(subset=["アカウント名"])
         st.write("✅ アカウント名で重複削除しました")
 
+    # 集計表示
     st.subheader("📊 集計結果")
     summary = df_unique.groupby("アカウント名")["投票数"].sum().reset_index()
     st.dataframe(summary)
