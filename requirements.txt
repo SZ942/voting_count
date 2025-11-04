@@ -1,5 +1,8 @@
+# requirements.txt
+
 streamlit
+pandas
 easyocr
-pillow
 numpy
-torch
+Pillow
+opencv-python-headless
