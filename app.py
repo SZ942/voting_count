@@ -5,49 +5,55 @@ import re
 from PIL import Image
 import io
 import numpy as np
-import cv2 # OpenCV をインポート (画像処理・クロップ用)
+import cv2 
 
 # --- 設定とヘルパー関数 ---
 
 @st.cache_resource
 def load_reader():
-    """
-    EasyOCRリーダーをキャッシュします。
-    """
-    # 日本語と英語を認識
+    """EasyOCRリーダーをキャッシュします。"""
     reader = easyocr.Reader(['ja', 'en'])
     return reader
 
-def extract_info(text, date_text):
+def extract_info(text, date_text, count_only_text):
     """
     OCRテキストから日付と投票回数を抽出します。
-    投票回数の抽出はメインのテキストから、日付はクロップ範囲を絞ったテキストから行います。
     """
     
-    # --- 投票回数の正規表現 ---
-    # 「投票回数」または「総使用量」の後に続く数字を抽出。
-    # 数字はカンマを含む可能性があるので [\d,]+ で対応。
-    count_pattern = r"投票回数[:：\s]*([\d,]+)|総使用量[:：\s]*([\d,]+)"
+    # --- 投票回数の正規表現 (強化版) ---
+    # 1. 「投票回数」または「総使用量」の後に続く数字
+    # 2. 単独の数字（最小1桁、最大6桁程度を想定し、カンマを許容しないように修正）
+    #    単独の数字を誤認識しないよう、桁数を絞って抽出を試みます。
+    count_pattern = r"投票回数[:：\s]*(\d+)|総使用量[:：\s]*(\d+)"
     
     count_match = re.search(count_pattern, text)
-    
     count = "N/A"
+    
+    # まず「投票回数」などのラベル付きの数字を探す
     if count_match:
         count = next((g for g in count_match.groups() if g is not None), "N/A")
-        count = count.replace(",", "") # カンマを除去
+    
+    # ラベル付きの数字が見つからなかった場合、単独の数字（24など）を探す
+    if count == "N/A" and count_only_text:
+        # 数字のみのテキスト（allowlist='0123456789'でOCRしたもの）から、
+        # 3桁以下の数字を抽出。これは「24」のような単独の数字を拾うため。
+        single_count_match = re.search(r"\d{1,3}", count_only_text)
+        if single_count_match:
+            count = single_count_match.group(0)
 
     # --- 日付の正規表現 ---
     # YYYY.MM.DD または YYYY.M.D 形式に柔軟にマッチ
-    # date_text (数字とドットに特化したOCR結果) を使用
     date_pattern = r"(\d{4}\.\d{1,2}\.\d{1,2})"
     date_match = re.search(date_pattern, date_text)
     date = date_match.group(0) if date_match else "N/A"
 
-    return date, count
+    return date, count.replace(",", "") # 念のためカンマを除去
 
+# ... (convert_df_to_csv関数は省略) ...
 def convert_df_to_csv(df):
     """DataFrameをUTF-8(BOM付き)のCSVに変換します (Excelでの文字化け対策)"""
     return df.to_csv(index=False).encode('utf-8-sig')
+
 
 # --- Streamlit UI ---
 
@@ -78,51 +84,49 @@ if uploaded_files:
 
         # 2. OCR処理と情報抽出
         for i, uploaded_file in enumerate(uploaded_files):
-            
-            # --- デバッグ用: ファイル名と現在の進捗表示 ---
-            st.sidebar.markdown(f"**処理中:** `{uploaded_file.name}`")
-            # ----------------------------------------------
-            
             try:
-                # 画像の読み込み (PILからNumPy配列へ)
                 image_bytes = uploaded_file.getvalue()
                 image = Image.open(io.BytesIO(image_bytes))
                 image_np = np.array(image)
                 
                 h, w = image_np.shape[:2]
                 
-                # ★★★ 修正点1: クロップ範囲を右下1/3に絞る ★★★
-                # 目的の文字周辺に絞ることで精度向上を狙う
-                y_start_count = h * 2 // 3 # 高さの2/3から
-                x_start_count = w * 2 // 3 # 幅の2/3から
+                # ★★★ 修正点1: クロップ範囲を右下2/3に広げる ★★★
+                # 高さの1/3から、幅の1/3から開始
+                y_start_wide = h // 3 
+                x_start_wide = w // 3 
                 
-                cropped_image_count_np = image_np[y_start_count:h, x_start_count:w]
+                cropped_image_wide_np = image_np[y_start_wide:h, x_start_wide:w]
                 
                 # (A) 投票回数などの認識（日本語と数字）
-                ocr_results_count = reader.readtext(cropped_image_count_np, detail=0)
-                full_text_count = " ".join(ocr_results_count) 
+                ocr_results_wide = reader.readtext(cropped_image_wide_np, detail=0)
+                full_text_wide = " ".join(ocr_results_wide) 
                 
-                # ★★★ 修正点2: 日付認識のためにさらに範囲を絞り、認識文字を限定する ★★★
-                # 日付は画像の一番右下の隅にあると仮定
-                y_start_date = h * 3 // 4 # 高さの3/4から
-                x_start_date = w * 3 // 4 # 幅の3/4から
+                # ★★★ 修正点2: 日付認識のためにクロップと文字限定は維持する ★★★
+                # 日付と単独の投票回数 (24) のための狭い領域
+                y_start_narrow = h * 3 // 4 
+                x_start_narrow = w * 3 // 4 
                 
-                cropped_image_date_np = image_np[y_start_date:h, x_start_date:w]
+                cropped_image_narrow_np = image_np[y_start_narrow:h, x_start_narrow:w]
                 
-                # (B) 日付の認識（数字とドットのみに限定: 誤認識防止）
-                # allowlist: 認識を許可する文字セットを指定 (数字とドット)
-                ocr_results_date = reader.readtext(cropped_image_date_np, detail=0, allowlist='0123456789.')
+                # (B) 日付の認識（数字とドットのみに限定）
+                ocr_results_date = reader.readtext(cropped_image_narrow_np, detail=0, allowlist='0123456789.')
                 full_text_date = " ".join(ocr_results_date)
                 
+                # (C) 単独の数字（24）の認識（数字のみに限定）
+                # 日付と同じクロップ範囲を使い、数字のみを許可
+                ocr_results_count_only = reader.readtext(cropped_image_narrow_np, detail=0, allowlist='0123456789')
+                full_text_count_only = " ".join(ocr_results_count_only)
+                
                 # 情報抽出
-                date, count = extract_info(full_text_count, full_text_date)
+                date, count = extract_info(full_text_wide, full_text_date, full_text_count_only)
                 
                 results_data.append({
                     "ファイル名": uploaded_file.name,
                     "日付": date,
                     "投票回数": count,
-                    "検出テキスト (全体/参考)": full_text_count[:100] + "...",
-                    "検出テキスト (日付/参考)": full_text_date
+                    "検出テキスト (ワイド)": full_text_wide[:100] + "...",
+                    "検出テキスト (日付/数字のみ)": full_text_date
                 })
 
             except Exception as e:
@@ -131,8 +135,8 @@ if uploaded_files:
                     "ファイル名": uploaded_file.name,
                     "日付": "エラー",
                     "投票回数": "エラー",
-                    "検出テキスト (全体/参考)": str(e),
-                    "検出テキスト (日付/参考)": "エラー"
+                    "検出テキスト (ワイド)": str(e),
+                    "検出テキスト (日付/数字のみ)": "エラー"
                 })
             
             progress_bar.progress((i + 1) / len(uploaded_files), text=f"処理中: {uploaded_file.name}")
@@ -147,7 +151,7 @@ if uploaded_files:
             st.dataframe(df, use_container_width=True)
             
             # 4. CSVダウンロード
-            csv_data = convert_df_to_csv(df.drop(columns=["検出テキスト (全体/参考)", "検出テキスト (日付/参考)"], errors='ignore'))
+            csv_data = convert_df_to_csv(df.drop(columns=["検出テキスト (ワイド)", "検出テキスト (日付/数字のみ)"], errors='ignore'))
             st.download_button(
                 label="📥 結果をCSVでダウンロード",
                 data=csv_data,
