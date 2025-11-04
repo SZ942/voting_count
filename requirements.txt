@@ -1,6 +1,11 @@
 streamlit
 easyocr
 pillow
+numpy
 pandas
+
+
+
+
 
 
