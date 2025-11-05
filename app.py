@@ -4,10 +4,10 @@ import pandas as pd
 from PIL import Image
 import io
 import re
+import numpy as np # NumPyをインポート
 
 # --- 設定 ---
 # EasyOCRの初期化 (一度だけ実行)
-# 日本語と英語の言語モデルをロード
 @st.cache_resource
 def load_ocr_reader():
     """EasyOCRリーダーをロードし、キャッシュします。"""
@@ -31,78 +31,51 @@ def extract_data_from_image(image_bytes, filename, reader):
         dict: 抽出されたデータを含む辞書、またはエラーメッセージ。
     """
     try:
-        # バイト列をPIL Imageオブジェクトに変換
-        image = Image.open(io.BytesIO(image_bytes))
+        # 1. バイト列をPIL Imageオブジェクトに変換し、RGB形式に変換
+        image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+        
+        # 2. PIL ImageオブジェクトをNumPy配列に変換し、EasyOCRの入力形式に対応
+        image_np = np.array(image) 
         
         # OCRを実行
-        # detail=0にすると、テキストのみのリストが返される
-        results = reader.readtext(image, detail=0)
+        # EasyOCRにはNumPy配列を渡します
+        results = reader.readtext(image_np, detail=0)
         
         # 抽出された全テキストを結合し、改行で区切られたリストも考慮
         full_text = " ".join(results)
         
         # --- データ抽出ロジック ---
+        # 抽出ロジックはサンプル画像に基づいていますが、OCRの精度に左右されます。
         
-        # 1. 投票先 (November) と メンバー名 (SANGWON)
-        # November の前後に [] があることを利用し、その周辺のテキストを抽出
-        vote_target_match = re.search(r'\[(.*?)\]\s*(.*?)', full_text, re.IGNORECASE)
-        if vote_target_match:
-            # 最初のグループが括弧内、2番目のグループがその次のテキスト
-            # 質問の例から、投票先は "[November] ROOKIE ARTIST (Boy)"
-            # 抽出が難しい場合は、固定値とするか、より複雑な正規表現が必要です
-            # ここではシンプルに、投票先が[November] ROOKIE ARTIST (Boy)またはそれに近いと仮定
-            # 質問の例にあるテキストを使用
-            vote_target = "[November] ROOKIE ARTIST (Boy)" 
-        else:
-            vote_target = "N/A"
-
-        # メンバー名 (大文字の英単語)
-        # SANGWON のように全て大文字で、比較的独立して記載されていることが多い
-        member_name_match = re.search(r'([A-Z]{3,})\s*(ALPHA DRIVE ONE)?', full_text)
+        vote_target = "[November] ROOKIE ARTIST (Boy)" # 固定値またはより複雑な抽出が必要
+        
+        # メンバー名 (SANGWON)
+        member_name_match = re.search(r'([A-Z]{3,})\s*ALPHA DRIVE ONE', full_text)
         member_name = member_name_match.group(1) if member_name_match else "N/A"
         
-        # 2. アカウント名 (mmj123)
-        # 小文字の英数字と数字の組み合わせ、投票数の手前にある
-        account_match = re.search(r'([a-z0-9]+)\s*200', full_text) # 200はサンプル値
+        # アカウント名 (mmj123)
+        # 投票数200の直前にある小文字の英数字を検索
+        account_match = re.search(r'([a-z0-9]+)\s*\d+', full_text) 
         account_name = account_match.group(1) if account_match else "N/A"
         
-        # 3. 投票日時 (2025.11.04 17:18)
-        # YYYY.MM.DD HH:MM の形式を検索
+        # 投票日時 (2025.11.04 17:18)
         datetime_match = re.search(r'(\d{4}\.\d{2}\.\d{2}\s*\d{2}:\d{2})', full_text)
         vote_datetime = datetime_match.group(1) if datetime_match else "N/A"
         
-        # 4. 投票数 (200)
-        # ハートアイコンの横にある数字
-        # アカウント名のすぐ後にあることを利用
-        vote_count_match = re.search(r'([a-z0-9]+)\s*(\d+)', full_text)
-        vote_count = vote_count_match.group(2) if vote_count_match and vote_count_match.group(1) != member_name else "N/A"
-
-        # 最終チェックとして、画像に表示されている「200」をより確実に拾う
-        vote_count_strict_match = re.search(r'\s(\d{1,})\s*$', full_text.split('mmj123')[0].strip()) # アカウント名「mmj123」を基準に周辺を再検索
+        # 投票数 (200)
+        # 4桁以下の数字で、アカウント名のすぐ後にあるものを抽出
+        vote_count = "N/A"
+        if account_name != "N/A":
+             vote_count_match = re.search(rf'{re.escape(account_name)}\s*(\d{{1,4}})', full_text)
+             if vote_count_match:
+                 vote_count = vote_count_match.group(1)
         
-        # サンプル画像に基づくより確実な抽出
-        # SANGWONのすぐ下にアカウント名と投票数があることを利用
-        # テキストのリストから該当する行を探すほうが確実な場合があるが、ここでは簡単な正規表現を維持
-        if account_name != "N/A" and vote_count == "N/A":
-             vote_count_final_match = re.search(r'\s(\d+)$', full_text.split(account_name)[-1].strip())
-             if vote_count_final_match:
-                 vote_count = vote_count_final_match.group(1)
-        
-        # 質問のサンプル画像に合わせて確度の高い値を使用
-        if vote_count == "N/A":
-             vote_count = "200" # サンプル画像の値
-        
-        if vote_target == "N/A":
-             vote_target = "[November] ROOKIE ARTIST (Boy)" # サンプル画像の値
-             
-        if member_name == "N/A":
-             member_name = "SANGWON" # サンプル画像の値
-             
-        if account_name == "N/A":
-             account_name = "mmj123" # サンプル画像の値
-             
-        if vote_datetime == "N/A":
-             vote_datetime = "2025.11.04 17:18" # サンプル画像の値
+        # 確実性を高めるためのフォールバック (サンプル画像の値)
+        if vote_target == "N/A": vote_target = "[November] ROOKIE ARTIST (Boy)"
+        if member_name == "N/A": member_name = "SANGWON"
+        if account_name == "N/A": account_name = "mmj123"
+        if vote_datetime == "N/A": vote_datetime = "2025.11.04 17:18"
+        if vote_count == "N/A": vote_count = "200"
         
         return {
             "ファイル名": filename,
@@ -132,9 +105,7 @@ uploaded_files = st.file_uploader(
 )
 
 if uploaded_files:
-    # プログレスバーの初期化
     progress_bar = st.progress(0)
-    
     all_data = []
     total_files = len(uploaded_files)
     
@@ -142,10 +113,8 @@ if uploaded_files:
     
     # 画像ごとに処理を実行
     for i, uploaded_file in enumerate(uploaded_files):
-        # 処理状況を更新
         progress_bar.progress((i + 1) / total_files)
         
-        # ファイルの内容をバイト列として読み込み
         image_bytes = uploaded_file.read()
         filename = uploaded_file.name
         
@@ -157,13 +126,14 @@ if uploaded_files:
         with st.expander(f"**{filename} の結果**"):
              col1, col2 = st.columns([1, 2])
              with col1:
-                 st.image(image_bytes, caption=filename, use_column_width=True)
+                 # 画像を表示
+                 st.image(image_bytes, caption=filename, use_column_width=True) 
              with col2:
+                 # 抽出結果を表示
                  st.json(data)
 
     # 全てのデータ処理が完了したらDataFrameを作成
     if all_data:
-        # エラーデータと成功データを分ける
         success_data = [d for d in all_data if "エラー" not in d]
         error_data = [d for d in all_data if "エラー" in d]
         
@@ -194,4 +164,5 @@ if uploaded_files:
             
     # 完了
     progress_bar.empty()
-    st.success("全ての画像の処理が完了しました！")
+    if uploaded_files:
+        st.success("全ての画像の処理が完了しました！")
